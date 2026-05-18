@@ -1,0 +1,91 @@
+import os
+import pandas as pd
+
+
+# STEP 0: SET UP PATHS & LOAD CLEAN DATA
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CLEANED_DATA_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "data", "APL_Logistics_Cleaned.csv"))
+
+print("--- Loading Cleaned APL Logistics Dataset ---")
+df = pd.read_csv(CLEANED_DATA_PATH)
+print(f"Dataset Loaded. Operating on {df.shape[0]} valid transactions.\n")
+
+# Global Financial Totals
+total_revenue = df['Sales'].sum()
+total_profit = df['Order Profit Per Order'].sum()
+overall_margin = (total_profit / total_revenue) * 100
+
+print("==========================================")
+print(f"GLOBAL FINANCIAL OVERVIEW")
+print(f"Total Revenue: ${total_revenue:,.2f}")
+print(f"Total Net Profit: ${total_profit:,.2f}")
+print(f"Overall Profit Margin: {overall_margin:.2f}%")
+print("==========================================\n")
+
+
+# DIAGNOSTIC 1: PRODUCT & CATEGORY PROFITABILITY
+
+print("--- Diagnostic 1: Category Profit Performance ---")
+# Aggregate data by Category Name
+category_perf = df.groupby('Category Name').agg(
+    Total_Sales=('Sales', 'sum'),
+    Total_Profit=('Order Profit Per Order', 'sum')
+).reset_index()
+
+category_perf['Profit_Margin_%'] = (category_perf['Total_Profit'] / category_perf['Total_Sales']) * 100
+category_perf = category_perf.sort_values(by='Profit_Margin_%', ascending=False)
+
+print("\nTop 5 Most Profitable Categories (by Margin %):")
+print(category_perf.head(5).to_string(index=False))
+
+print("\nTop 5 Lowest/Loss-Making Categories (by Margin %):")
+print(category_perf.tail(5).to_string(index=False))
+
+
+# DIAGNOSTIC 2: PRODUCT LEVEL "REVENUE TRAPS"
+
+print("\n--- Diagnostic 2: High-Revenue, Low-Margin 'Revenue Traps' ---")
+product_perf = df.groupby('Product Name').agg(
+    Total_Sales=('Sales', 'sum'),
+    Total_Profit=('Order Profit Per Order', 'sum')
+).reset_index()
+product_perf['Profit_Margin_%'] = (product_perf['Total_Profit'] / product_perf['Total_Sales']) * 100
+
+# Filter for products that bring in lots of cash but surrender high profit margins
+high_revenue_thresh = product_perf['Total_Sales'].quantile(0.75) # Top 25% in revenue
+revenue_traps = product_perf[
+    (product_perf['Total_Sales'] >= high_revenue_thresh) & 
+    (product_perf['Profit_Margin_%'] < 5) # Margins thinner than 5%
+].sort_values(by='Total_Sales', ascending=False)
+
+print(f"\nProducts with High Sales Volume but Critical Margin Decay (Sales > ${high_revenue_thresh:,.2f}):")
+print(revenue_traps.head(5).to_string(index=False))
+
+
+# DIAGNOSTIC 3: DISCOUNT IMPACT ANALYSIS
+
+print("\n--- Diagnostic 3: Discount Impact Thresholds ---")
+# Group by discount rates to find where the profit ratio plummets
+discount_perf = df.groupby('Order Item Discount Rate').agg(
+    Avg_Profit_Ratio=('Order Item Profit Ratio', 'mean'),
+    Total_Orders=('Sales', 'count'),
+    Total_Losses=('Order Profit Per Order', lambda x: (x < 0).sum())
+).reset_index()
+
+discount_perf['Loss_Order_Rate_%'] = (discount_perf['Total_Losses'] / discount_perf['Total_Orders']) * 100
+print("\nDiscount Rates vs Average Profit Ratios & Loss Multipliers:")
+print(discount_perf.sort_values(by='Order Item Discount Rate').to_string(index=False))
+
+
+
+# DIAGNOSTIC 4: GEOGRAPHIC LEAKAGE
+
+print("\n--- Diagnostic 4: Regional Performance Diagnostics ---")
+market_perf = df.groupby('Market').agg(
+    Total_Sales=('Sales', 'sum'),
+    Total_Profit=('Order Profit Per Order', 'sum')
+).reset_index()
+market_perf['Profit_Margin_%'] = (market_perf['Total_Profit'] / market_perf['Total_Sales']) * 100
+print("\nGlobal Market Profitability Ranking:")
+print(market_perf.sort_values(by='Profit_Margin_%', ascending=False).to_string(index=False))
