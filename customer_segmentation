@@ -1,0 +1,75 @@
+import os
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+
+
+# SET UP PATHS & LOAD CLEAN DATA
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CLEANED_DATA_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "data", "APL_Logistics_Cleaned.csv"))
+SEGMENTED_OUTPUT_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "data", "APL_Logistics_Segmented.csv"))
+
+print("--- Loading Cleaned Data for Machine Learning Segmentation ---")
+df = pd.read_csv(CLEANED_DATA_PATH)
+
+# STEP 1: AGGREGATE METRICS PER CUSTOMER
+
+print("Aggregating historical metrics per Customer ID...")
+customer_df = df.groupby(['Customer Id', 'Customer_Name', 'Customer Segment']).agg(
+    Total_Sales=('Sales', 'sum'),
+    Total_Profit=('Order Profit Per Order', 'sum'),
+    Order_Count=('Sales', 'count')
+).reset_index()
+
+
+# STEP 2: PREPROCESS DATA FOR ML
+
+features = ['Total_Sales', 'Total_Profit']
+scaler = StandardScaler()
+scaled_features = scaler.fit_transform(customer_df[features])
+
+
+# STEP 3: TRAIN K-MEANS CLUSTERING MODEL
+
+print("Training K-Means Model (Clusters = 4)...")
+kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+customer_df['Cluster'] = kmeans.fit_predict(scaled_features)
+
+# STEP 4: PROFILE AND MAP THE CLUSTERS
+
+
+
+# Calculate cluster centers to understand their baseline profiles
+cluster_summary = customer_df.groupby('Cluster').agg(
+    Avg_Sales=('Total_Sales', 'mean'),
+    Avg_Profit=('Total_Profit', 'mean'),
+    Customer_Count=('Customer Id', 'count')
+).reset_index()
+
+# Sort clusters dynamically by profit to consistently label them
+cluster_summary = cluster_summary.sort_values(by='Avg_Profit', ascending=False).reset_index(drop=True)
+
+# Create a mapping dictionary based on profit profile rankings
+tier_mapping = {
+    cluster_summary.loc[0, 'Cluster']: 'Tier 1: Champions (High Value)',
+    cluster_summary.loc[1, 'Cluster']: 'Tier 2: Core Accounts (Stable Value)',
+    cluster_summary.loc[2, 'Cluster']: 'Tier 3: Low Margin/Volume Drivers',
+    cluster_summary.loc[3, 'Cluster']: 'Tier 4: Value Eroding / High Risk'
+}
+
+customer_df['Customer_Value_Tier'] = customer_df['Cluster'].map(tier_mapping)
+
+# Display profile results (EMOJIS REMOVED TO PREVENT WINDOWS CRASH)
+print("\n=== MACHINE LEARNING CUSTOMER TIER PROFILE ===")
+for tier in sorted(customer_df['Customer_Value_Tier'].unique()):
+    sub_df = customer_df[customer_df['Customer_Value_Tier'] == tier]
+    print(f"\n[-] {tier}")
+    print(f"   Total Customers: {sub_df.shape[0]}")
+    print(f"   Average Historical Sales: ${sub_df['Total_Sales'].mean():,.2f}")
+    print(f"   Average Historical Net Profit: ${sub_df['Total_Profit'].mean():,.2f}")
+
+
+# STEP 5: SAVE SEGMENTED INSIGHTS
+customer_df.to_csv(SEGMENTED_OUTPUT_PATH, index=False)
+print(f"\n[SUCCESS] Customer value matrix saved to: {SEGMENTED_OUTPUT_PATH}")
